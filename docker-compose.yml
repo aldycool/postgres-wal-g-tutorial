@@ -12,11 +12,12 @@ services:
       - net1
     volumes:
       - /root/mount/postgres:/var/lib/postgresql/data
+      - /root/mount/wal-g:/var/lib/postgresql/wal-g-data
     environment:
-      - PGDATA=/var/lib/postgresql/data/pgdata
+      - PGDATA=/var/lib/postgresql/data
       - POSTGRES_DB=test_db
       - POSTGRES_PASSWORD=secretpass
-      - WALG_FILE_PREFIX=/var/lib/postgresql/data/wal-g-data
+      - WALG_FILE_PREFIX=/var/lib/postgresql/wal-g-data
 
   pgadmin:
     image: "dpage/pgadmin4:6.11"

@@ -33,9 +33,9 @@
   mkdir -p /root/mount/pgadmin
   # pgadmin requires write access, so (lazily):
   chmod 777 /root/mount/pgadmin
-  mkdir -p /root/mount/postgres/wal-g-data
+  mkdir -p /root/mount/wal-g
   # give full write access for the wal-g test folder, so (lazily):
-  chmod 777 /root/mount/postgres/wal-g-data
+  chmod 777 /root/mount/wal-g
   ```
 - Copy the `docker-compose.yml` into `/root` folder and launch the docker-compose:
   ```
@@ -47,7 +47,7 @@
   ```
 - Enable the PostgreSQL WAL archiving feature, edit the postgresql.conf:
   ```
-  nano /root/mount/postgres/pgdata/postgresql.conf
+  nano /root/mount/postgres/postgresql.conf
   # Add these lines:
   archive_mode = on
   archive_command = '/usr/bin/wal-g wal-push %p'
@@ -71,15 +71,15 @@
   ```
   docker-compose down
   # Now we simulate disaster, we will delete all PostgreSQL data directory completely
-  rm -rf /root/mount/postgres/pgdata/*
+  rm -rf /root/mount/postgres/*
   # Then, we will call wal-g using docker run, to fetch base backup from wal-g storage (the parameters is exactly the same as in docker-compose.yml). The result is we will populate the PostgreSQL data directory with the latest backup from wal-g.
-  docker run -v "/root/mount/postgres:/var/lib/postgresql/data" -e PGDATA=/var/lib/postgresql/data/pgdata -e POSTGRES_DB=test_db -e POSTGRES_PASSWORD=secretpass -e WALG_FILE_PREFIX=/var/lib/postgresql/data/wal-g-data --rm aldycool/postgres-wal-g:14.4 wal-g backup-fetch /var/lib/postgresql/data/pgdata LATEST
+  docker run -v "/root/mount/postgres:/var/lib/postgresql/data" -v "/root/mount/wal-g:/var/lib/postgresql/wal-g-data" -e PGDATA=/var/lib/postgresql/data -e POSTGRES_DB=test_db -e POSTGRES_PASSWORD=secretpass -e WALG_FILE_PREFIX=/var/lib/postgresql/wal-g-data --rm aldycool/postgres-wal-g:14.4 wal-g backup-fetch /var/lib/postgresql/data LATEST
   # After the data directory gets populated, edit the postgresql.conf:
-  nano /root/mount/postgres/pgdata/postgresql.conf
+  nano /root/mount/postgres/postgresql.conf
   # Add this line:
   restore_command = '/usr/bin/wal-g wal-fetch "%f" "%p" >> /tmp/wal.log 2>&1'
   # And also create a special file using postgres user to instruct PostgreSQL to recover using the above settings upon startup
-  docker run -v "/root/mount/postgres:/var/lib/postgresql/data" -e PGDATA=/var/lib/postgresql/data/pgdata -e POSTGRES_DB=test_db -e POSTGRES_PASSWORD=secretpass -e WALG_FILE_PREFIX=/var/lib/postgresql/data/wal-g-data --rm --user postgres aldycool/postgres-wal-g:14.4 touch /var/lib/postgresql/data/pgdata/recovery.signal
+  docker run -v "/root/mount/postgres:/var/lib/postgresql/data" -v "/root/mount/wal-g:/var/lib/postgresql/wal-g-data" -e PGDATA=/var/lib/postgresql/data -e POSTGRES_DB=test_db -e POSTGRES_PASSWORD=secretpass -e WALG_FILE_PREFIX=/var/lib/postgresql/wal-g-data --rm --user postgres aldycool/postgres-wal-g:14.4 touch /var/lib/postgresql/data/recovery.signal
   # Start the PostgreSQL again
   docker-compose up -d
   # Now check the database, any changes will be restored because we use restore_command earlier as the point of recovery.
@@ -92,7 +92,22 @@
   ```
 - The resulted database should be empty (as this is the time when we've just restarted to enable WAL archiving).
 
-
+##  Restore Base + WAL from StackGres S3 Storage
+Follow the same steps above except:
+- Copy the Base + WAL files from S3 into the folder `wal-g-data`, the resulted folder will be:
+  - wal-g-data/basebackups_005
+  - wal-g-data/wal_005
+- Start from the restoring phase:
+  - Make sure the /var/lib/postgresql/data is empty
+  - Execute the `wal-g backup-fetch` part so we populate the postgresql data folder. Remove the env POSTGRES_DB, change the env POSTGRES_PASSWORD to use real password.
+  - For StackGres specific:
+    - These are the needed changes in postgresql.conf:
+      - Replace existing archive_command with the one above
+      - Remark shared_preload_libraries
+      - Add the restore_command (and optionally the recovery_target_* lines)
+  - Create the recovery.conf file (set chmod 777 to ensure postgres can delete the file later)
+  - Start the docker-compose.yml.
+  - NOTE (if for some reason docker logs shows error: permission denied on upload, just ignore it, it just tried to upload the new archive data. As long as the initial log lines where the ones informing the restore part is ok, then the data is successfully recovered).
 
 
 
