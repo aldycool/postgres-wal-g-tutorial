@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pg-restore
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: restore-postgres-pvc
+  namespace: pg-restore
+spec:
+  storageClassName: longhorn
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: restore-setup
+  namespace: pg-restore
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  volumes:
+    - name: vol-postgresql
+      persistentVolumeClaim:
+        claimName: restore-postgres-pvc
+  containers:
+    - name: postgres-wal-g-setup
+      image: aldycool/postgres-wal-g:14.4
+      volumeMounts:
+        - name: vol-postgresql
+          mountPath: /var/lib/postgresql
+      env:
+        - name: WALG_S3_PREFIX
+          value: "s3://k3s-bucket/stackgres/test/sgbackups.stackgres.io/pg-test/test/14"
+        - name: AWS_ACCESS_KEY_ID
+          value: "minio"
+        - name: AWS_SECRET_ACCESS_KEY
+          value: "k3s123456"
+        - name: AWS_ENDPOINT
+          value: "http://192.168.15.9:9100"
+        - name: AWS_REGION
+          value: "us-east-1"
+        - name: AWS_S3_FORCE_PATH_STYLE
+          value: "true"
+        - name: WALG_S3_STORAGE_CLASS
+          value: "STANDARD"
+      command: ["/bin/sh"]
+      args:
+        - -c
+        - >-
+          echo "Switch to user: postgres..." &&
+          su postgres &&
+          echo "Creating Folders..." &&
+          mkdir -p /var/lib/postgresql/data &&
+          echo "Fetch Backup..." &&
+          wal-g backup-fetch /var/lib/postgresql/data LATEST &&
+          echo "Edit postgresql.conf to disable existing configs..." &&
+          sed -i '/^[^#]/ s/\(^.*archive_command.*$\)/#\1/' /var/lib/postgresql/data/postgresql.conf &&
+          sed -i '/^[^#]/ s/\(^.*restore_command.*$\)/#\1/' /var/lib/postgresql/data/postgresql.conf &&
+          sed -i '/^[^#]/ s/\(^.*shared_preload_libraries.*$\)/#\1/' /var/lib/postgresql/data/postgresql.conf &&
+          echo "Edit postgresql.conf to add required configs..." &&
+          echo "archive_command = '/usr/bin/wal-g wal-push %p'" >> /var/lib/postgresql/data/postgresql.conf &&
+          echo "restore_command = '/usr/bin/wal-g wal-fetch \"%f\" \"%p\" >> /tmp/wal.log 2>&1'" >> /var/lib/postgresql/data/postgresql.conf &&
+          echo "Create recovery signal file..." &&
+          touch /var/lib/postgresql/data/recovery.signal &&
+          echo "Finished!" &&
+          trap : TERM INT; sleep 9999999999d & wait

@@ -1,0 +1,71 @@
+# IMPORTANT:
+# 1. Set the created PV from manifest-01.yml's reclaim policy to be Retain:
+# 2. Delete the manifest-01.yml's Pod
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: restore-result-pvc
+  namespace: pg-restore
+spec:
+  storageClassName: longhorn
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restore
+  namespace: pg-restore
+spec:
+  selector:
+    matchLabels:
+      app: pg-restore-app
+  template:
+    metadata:
+      labels:
+        app: pg-restore-app
+    spec:
+      volumes:
+        - name: vol-postgresql
+          persistentVolumeClaim:
+            claimName: restore-postgres-pvc
+        - name: vol-result
+          persistentVolumeClaim:
+            claimName: restore-result-pvc
+      containers:
+        - name: postgres-wal-g
+          image: aldycool/postgres-wal-g:14.4
+          volumeMounts:
+            - name: vol-postgresql
+              mountPath: /var/lib/postgresql
+            - name: vol-result
+              mountPath: /restore-result
+          env:
+            - name: WALG_S3_PREFIX
+              value: "s3://k3s-bucket/stackgres/test/sgbackups.stackgres.io/pg-test/test/14"
+            - name: AWS_ACCESS_KEY_ID
+              value: "minio"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "k3s123456"
+            - name: AWS_ENDPOINT
+              value: "http://192.168.15.9:9100"
+            - name: AWS_REGION
+              value: "us-east-1"
+            - name: AWS_S3_FORCE_PATH_STYLE
+              value: "true"
+            - name: WALG_S3_STORAGE_CLASS
+              value: "STANDARD"
+            - name: POSTGRES_PASSWORD
+              value: "k3s1234"
+            - name: PGDATA
+              value: "/var/lib/postgresql/data"
+          command: ["/bin/sh"]
+          args:
+            - -c
+            - >-
+              echo "Finished!" &&
+              trap : TERM INT; sleep 9999999999d & wait
